@@ -1,190 +1,255 @@
 """
-predict.py
-----------
-Tahmin modülü.
-Eğitilmiş model ve vektörleştirici kullanılarak
-yeni haber metinleri üzerinde tahmin yapar.
+preprocess.py
+-------------
+Haber metinleri için NLP ön işleme modülü.
+Türkçe ve İngilizce ikidilli destek sunar.
+Lowercase, noktalama temizleme, stopword kaldırma,
+tokenization ve TF-IDF vektörleştirme işlemlerini içerir.
 """
 
+import re
+import string
+import pandas as pd
+import nltk
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer
+import joblib
 import os
-import sys
-from typing import Tuple
 
-sys.path.insert(0, os.path.dirname(__file__))
-from preprocess import preprocess_text, load_vectorizer
-from train_model import load_model
+# Gerekli NLTK verilerini indir
+nltk.download("stopwords", quiet=True)
+nltk.download("punkt", quiet=True)
+nltk.download("punkt_tab", quiet=True)
 
-# Label haritası
-LABEL_MAP = {0: "FAKE NEWS", 1: "REAL NEWS"}
-LABEL_EMOJI = {0: "🔴", 1: "🟢"}
-LABEL_COLOR = {0: "fake", 1: "real"}
+# ── TÜRKÇE STOPWORD LİSTESİ ──────────────────────────────────────────────────
+TURKISH_STOPWORDS = {
+    "ve", "ile", "bir", "bu", "da", "de", "mi", "mu", "mü", "mı",
+    "için", "ama", "ya", "ki", "ne", "en", "çok", "daha", "hem",
+    "veya", "ancak", "fakat", "lakin", "oysa", "halbuki",
+    "şu", "biz", "siz", "onlar", "ben", "sen", "benim",
+    "senin", "onun", "bizim", "sizin", "onların", "bana", "sana",
+    "ona", "bize", "size", "onlara", "bende", "sende", "onda",
+    "bizde", "sizde", "onlarda", "benden", "senden", "ondan",
+    "olan", "olarak", "oldu", "olur", "olması", "olduğu",
+    "olacak", "edildi", "edilir", "edilmesi", "edilecek",
+    "var", "yok", "gibi", "kadar", "göre", "karşı", "doğru",
+    "önce", "sonra", "içinde", "dışında", "üzerinde", "altında",
+    "yanında", "arasında", "üzerine", "altına", "içine", "dışına",
+    "hakkında", "tarafından", "itibaren", "beri", "rağmen",
+    "üzere", "dolayı", "nedeniyle", "yüzünden", "sayesinde",
+    "böyle", "şöyle", "öyle", "nasıl", "neden", "niçin",
+    "nerede", "nereden", "nereye", "hangi", "kim", "kimin",
+    "her", "hiç", "bazı", "birkaç", "bütün", "tüm", "hepsi",
+    "çeşitli", "farklı", "diğer", "sadece", "yalnızca",
+    "bile", "dahi", "zaten", "artık", "henüz", "hala", "pek",
+    "oldukça", "fazla", "az", "biraz", "asla", "kesinlikle",
+    "mutlaka", "elbette", "tabii", "ise", "diye", "diyerek",
+    "şey", "şeyi", "şeyde", "şeye", "şeyden", "şeyler",
+    "kez", "kere", "defa", "sefer", "yıl", "ay", "gün", "saat",
+    "söyledi", "belirtti", "açıkladı", "ifade", "etti", "dedi",
+    "konuştu", "aktardı", "vurguladı", "paylaştı", "yer", "yere",
+    "olup", "üst", "alt", "ön", "arka", "iç", "dış", "yan",
+    "bunun", "şunun", "bunlar", "şunlar", "bunları", "şunları",
+    "yapılan", "yapılacak", "yapılmış", "yapıyor", "yapıldı",
+    "verilen", "verilecek", "verilmiş", "veriyor", "verildi",
+    "alınan", "alınacak", "alınmış", "alıyor", "alındı",
+    "olduğunu", "olduğu", "olduğunda", "olduğundan",
+    "olacağını", "olacağı", "olmadığını", "olmadığı",
+    "ettiğini", "ettiği", "edeceğini", "edeceği",
+    "çünkü", "zira", "nitekim", "özellikle", "ayrıca",
+    "amacıyla", "kapsamında", "çerçevesinde", "sürecinde",
+    "konusunda", "durumunda", "noktasında", "açısından",
+    "üzerinden", "yoluyla", "vasıtasıyla", "aracılığıyla",
+    "sonucunda", "ardından", "öncesinde", "sonrasında",
+    "birlikte", "beraber", "beraberinde", "karşılıklı",
+    "olduğu", "olduğunu", "olduklarını", "olmaktadır",
+    "edilmektedir", "bulunmaktadır", "gelmektedir",
+    "görmektedir", "almaktadır", "vermektedir",
+}
+
+# İngilizce stopword'ler
+_en_stops = set(stopwords.words("english"))
+
+# Birleşik Türkçe + İngilizce stopword seti
+STOP_WORDS = TURKISH_STOPWORDS | _en_stops
+
+VECTORIZER_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "vectorizer.pkl")
 
 
-def predict_news(text: str) -> Tuple[str, float, float]:
+def clean_text(text: str) -> str:
     """
-    Verilen haber metninin gerçek mi sahte mi olduğunu tahmin eder.
+    Ham metni temizler: küçük harfe çevirir, noktalama ve
+    sayıları kaldırır. Türkçe karakterleri (ğ, ü, ş, ı, ö, ç) korur.
 
     Parameters
     ----------
     text : str
-        Tahmin edilecek haber metni.
+        Temizlenecek ham metin.
 
     Returns
     -------
-    Tuple[str, float, float]
-        (label, fake_probability, real_probability)
-        label: 'FAKE NEWS' veya 'REAL NEWS'
-        fake_probability: Sahte olma olasılığı (0-1)
-        real_probability: Gerçek olma olasılığı (0-1)
+    str
+        Temizlenmiş metin.
+    """
+    if not isinstance(text, str):
+        return ""
+
+    # Küçük harfe çevir
+    text = text.lower()
+
+    # URL'leri kaldır
+    text = re.sub(r"http\S+|www\S+|https\S+", "", text)
+
+    # HTML tag'lerini kaldır
+    text = re.sub(r"<.*?>", "", text)
+
+    # Noktalama kaldır — Türkçe harfleri koru
+    text = re.sub(r"[^\w\sğüşıöçğüşıöç]", " ", text, flags=re.UNICODE)
+
+    # Sayıları kaldır
+    text = re.sub(r"\d+", "", text)
+
+    # Fazla boşlukları temizle
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
+
+
+def remove_stopwords(text: str) -> str:
+    """
+    Metinden Türkçe ve İngilizce stopword'leri kaldırır.
+
+    Parameters
+    ----------
+    text : str
+        Stopword'lerden arındırılacak metin.
+
+    Returns
+    -------
+    str
+        Stopword'leri kaldırılmış metin.
+    """
+    tokens = text.split()
+    filtered = [
+        word for word in tokens
+        if word not in STOP_WORDS and len(word) > 2
+    ]
+    return " ".join(filtered)
+
+
+def preprocess_text(text: str) -> str:
+    """
+    Tam NLP ön işleme pipeline'ını uygular:
+    clean_text → remove_stopwords
+    Türkçe ve İngilizce metinler için çalışır.
+
+    Parameters
+    ----------
+    text : str
+        İşlenecek ham haber metni.
+
+    Returns
+    -------
+    str
+        Tamamen işlenmiş metin.
+    """
+    text = clean_text(text)
+    text = remove_stopwords(text)
+    return text
+
+
+def preprocess_dataframe(df: pd.DataFrame, text_col: str = "text") -> pd.Series:
+    """
+    DataFrame içindeki metin sütununa ön işleme uygular.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        İşlenecek veri çerçevesi.
+    text_col : str
+        Metin sütununun adı.
+
+    Returns
+    -------
+    pd.Series
+        İşlenmiş metin serisi.
+    """
+    print(f"[INFO] {len(df)} satır için metin ön işleme uygulanıyor...")
+    processed = df[text_col].fillna("").apply(preprocess_text)
+    print("[INFO] Ön işleme tamamlandı.")
+    return processed
+
+
+def build_tfidf_vectorizer(max_features: int = 50000, ngram_range: tuple = (1, 2)) -> TfidfVectorizer:
+    """
+    TF-IDF vektörleştirici oluşturur.
+    Türkçe karakterleri destekleyen token_pattern kullanır.
+
+    Parameters
+    ----------
+    max_features : int
+        Maksimum özellik (kelime) sayısı.
+    ngram_range : tuple
+        Unigram ve bigram için (1, 2).
+
+    Returns
+    -------
+    TfidfVectorizer
+        Yapılandırılmış TF-IDF vektörleştirici.
+    """
+    return TfidfVectorizer(
+        max_features=max_features,
+        ngram_range=ngram_range,
+        sublinear_tf=True,
+        min_df=2,
+        max_df=0.95,
+        analyzer="word",
+        token_pattern=r"(?u)\b\w+\b",
+    )
+
+
+def fit_and_save_vectorizer(texts: pd.Series, vectorizer: TfidfVectorizer) -> TfidfVectorizer:
+    """
+    TF-IDF vektörleştiricisini eğitim verisi üzerinde fit eder ve kaydeder.
+
+    Parameters
+    ----------
+    texts : pd.Series
+        Fit edilecek metin serisi.
+    vectorizer : TfidfVectorizer
+        Fit edilecek vektörleştirici.
+
+    Returns
+    -------
+    TfidfVectorizer
+        Fit edilmiş vektörleştirici.
+    """
+    print("[INFO] TF-IDF vektörleştirici eğitiliyor...")
+    vectorizer.fit(texts)
+
+    os.makedirs(os.path.dirname(VECTORIZER_PATH), exist_ok=True)
+    joblib.dump(vectorizer, VECTORIZER_PATH)
+    print(f"[INFO] Vektörleştirici kaydedildi: {VECTORIZER_PATH}")
+    return vectorizer
+
+
+def load_vectorizer() -> TfidfVectorizer:
+    """
+    Kaydedilmiş TF-IDF vektörleştiricisini yükler.
+
+    Returns
+    -------
+    TfidfVectorizer
+        Yüklenmiş vektörleştirici.
 
     Raises
     ------
-    ValueError
-        Metin boş veya çok kısaysa.
+    FileNotFoundError
+        Vektörleştirici dosyası bulunamazsa.
     """
-    if not text or not text.strip():
-        raise ValueError("Metin boş olamaz!")
-
-    if len(text.strip()) < 20:
-        raise ValueError("Metin çok kısa! En az 20 karakter girin.")
-
-    # Model ve vektörleştiriciyi yükle
-    model = load_model()
-    vectorizer = load_vectorizer()
-
-    # Ön işleme
-    processed = preprocess_text(text)
-
-    # TF-IDF dönüşümü
-    text_tfidf = vectorizer.transform([processed])
-
-    # Tahmin
-    prediction = model.predict(text_tfidf)[0]
-    probabilities = model.predict_proba(text_tfidf)[0]
-
-    fake_prob = probabilities[0]
-    real_prob = probabilities[1]
-    label = LABEL_MAP[int(prediction)]
-
-    return label, float(fake_prob), float(real_prob)
-
-
-def predict_batch(texts: list) -> list:
-    """
-    Birden fazla haber metni için toplu tahmin yapar.
-
-    Parameters
-    ----------
-    texts : list
-        Tahmin edilecek metin listesi.
-
-    Returns
-    -------
-    list
-        Her metin için (label, fake_prob, real_prob) tuple'larından oluşan liste.
-    """
-    if not texts:
-        return []
-
-    model = load_model()
-    vectorizer = load_vectorizer()
-
-    results = []
-    for text in texts:
-        try:
-            processed = preprocess_text(text)
-            text_tfidf = vectorizer.transform([processed])
-            prediction = model.predict(text_tfidf)[0]
-            probabilities = model.predict_proba(text_tfidf)[0]
-
-            results.append({
-                "text": text[:100] + "..." if len(text) > 100 else text,
-                "label": LABEL_MAP[int(prediction)],
-                "fake_probability": float(probabilities[0]),
-                "real_probability": float(probabilities[1]),
-                "confidence": float(max(probabilities)),
-            })
-        except Exception as e:
-            results.append({
-                "text": text[:100] + "..." if len(text) > 100 else text,
-                "label": "ERROR",
-                "error": str(e),
-            })
-
-    return results
-
-
-def get_prediction_details(text: str) -> dict:
-    """
-    Tahmin sonucu ile birlikte ek detayları döndürür.
-
-    Parameters
-    ----------
-    text : str
-        Analiz edilecek haber metni.
-
-    Returns
-    -------
-    dict
-        label, fake_prob, real_prob, confidence, risk_level
-        ve işlenmiş metin bilgilerini içeren sözlük.
-    """
-    label, fake_prob, real_prob = predict_news(text)
-
-    confidence = max(fake_prob, real_prob)
-
-    # Risk seviyesi
-    if fake_prob >= 0.85:
-        risk_level = "Çok Yüksek Risk"
-    elif fake_prob >= 0.65:
-        risk_level = "Yüksek Risk"
-    elif fake_prob >= 0.45:
-        risk_level = "Orta Risk"
-    elif fake_prob >= 0.25:
-        risk_level = "Düşük Risk"
-    else:
-        risk_level = "Çok Düşük Risk"
-
-    processed_text = preprocess_text(text)
-    word_count_original  = len(text.split())
-    word_count_processed = len(processed_text.split())
-
-    return {
-        "label":          label,
-        "fake_probability": round(fake_prob * 100, 2),
-        "real_probability": round(real_prob * 100, 2),
-        "confidence":     round(confidence * 100, 2),
-        "risk_level":     risk_level,
-        "is_fake":        label == "FAKE NEWS",
-        "word_count":     word_count_original,
-        "processed_words": word_count_processed,
-        "emoji":          LABEL_EMOJI[0 if label == "FAKE NEWS" else 1],
-    }
-
-
-# ──────────────────────────────────────────────
-# MAIN (CLI kullanımı için)
-# ──────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Fake News Detector — Tahmin Aracı")
-    parser.add_argument("text", type=str, help="Analiz edilecek haber metni")
-    args = parser.parse_args()
-
-    print("\n" + "="*55)
-    print("   FAKE NEWS DETECTOR — TAHMİN")
-    print("="*55)
-
-    try:
-        details = get_prediction_details(args.text)
-        print(f"\n  Metin  : {args.text[:80]}{'...' if len(args.text) > 80 else ''}")
-        print(f"\n  Sonuç  : {details['emoji']} {details['label']}")
-        print(f"  Güven  : %{details['confidence']:.1f}")
-        print(f"  Sahte  : %{details['fake_probability']:.1f}")
-        print(f"  Gerçek : %{details['real_probability']:.1f}")
-        print(f"  Risk   : {details['risk_level']}")
-        print("\n" + "="*55)
-    except Exception as e:
-        print(f"\n[HATA] {e}\n")
+    if not os.path.exists(VECTORIZER_PATH):
+        raise FileNotFoundError(
+            f"Vektörleştirici bulunamadı: {VECTORIZER_PATH}\n"
+            "Lütfen önce 'python src/train_model.py' komutunu çalıştırın."
+        )
+    return joblib.load(VECTORIZER_PATH)
