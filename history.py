@@ -1,216 +1,291 @@
 """
-explainer.py
-------------
-Logistic Regression modelini kullanarak hangi kelimelerin
-sahte / gerçek sınıflandırmasını en çok tetiklediğini gösterir.
-
-eli5 kütüphanesi YOK ise alternatif olarak sklearn'in kendi
-coefficient'larından doğrudan kelime önemleri çıkarılır.
-Bu sayede eli5 bağımlılığı zorunlu değildir.
+history.py
+----------
+SQLite tabanlı analiz geçmişi yönetimi.
+Dış bağımlılık yok; yalnızca Python standart kütüphanesi kullanılır.
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import os
-import joblib
-import numpy as np
+import sqlite3
+from datetime import datetime
 
 
-# ─── Yardımcı ────────────────────────────────────────────────────────────────
+# Varsayılan veritabanı yolu
+_DEFAULT_DB_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),  # proje kökü
+    "data",
+    "history.db",
+)
 
-def _load_model_and_vectorizer(model_dir: str) -> tuple | None:
+
+# ─── Veritabanı kurulumu ──────────────────────────────────────────────────────
+
+def _get_conn(db_path: str = _DEFAULT_DB_PATH) -> sqlite3.Connection:
+    """SQLite bağlantısı döner; veritabanı yoksa oluşturur."""
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row  # Sütun ismiyle erişim
+    return conn
+
+
+def init_db(db_path: str = _DEFAULT_DB_PATH) -> None:
     """
-    Model ve vectorizer dosyalarını yükler.
-    Başarısız olursa None döner.
-
-    Returns
-    -------
-    tuple (model, vectorizer) veya None
+    Gerekli tabloyu oluşturur (yoksa).
+    Uygulama başlarken bir kez çağrılmalıdır.
     """
-    model_path      = os.path.join(model_dir, "model.pkl")
-    vectorizer_path = os.path.join(model_dir, "vectorizer.pkl")
-
-    if not (os.path.exists(model_path) and os.path.exists(vectorizer_path)):
-        return None
-
+    conn = _get_conn(db_path)
     try:
-        model      = joblib.load(model_path)
-        vectorizer = joblib.load(vectorizer_path)
-        return model, vectorizer
-    except Exception:
-        return None
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS analyses (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at    TEXT    NOT NULL,
+                source_type   TEXT    NOT NULL DEFAULT 'text',   -- 'text' | 'url'
+                url           TEXT,
+                domain        TEXT,
+                text_snippet  TEXT    NOT NULL,
+                full_text     TEXT,
+                result        TEXT    NOT NULL,   -- 'FAKE' | 'REAL'
+                confidence    REAL    NOT NULL,   -- 0.0–100.0
+                risk_level    TEXT
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def _get_top_words_from_lr(model, vectorizer, top_n: int = 15) -> dict:
+# ─── Kaydetme ────────────────────────────────────────────────────────────────
+
+def save_analysis(
+    text: str,
+    result: str,
+    confidence: float,
+    risk_level: str = "",
+    url: str = "",
+    domain: str = "",
+    source_type: str = "text",
+    db_path: str = _DEFAULT_DB_PATH,
+    snippet_len: int = 200,
+) -> int:
     """
-    LogisticRegression modelinden en etkili kelimeleri çıkarır.
-
-    Returns
-    -------
-    dict
-        {
-            "fake_words":  [(word, score), ...],
-            "real_words":  [(word, score), ...],
-            "method": "logistic_regression"
-        }
-    """
-    # Tüm feature isimlerini al
-    feature_names = np.array(vectorizer.get_feature_names_out())
-
-    # LR'nin coefficient'larını al (binary: class 1 = REAL)
-    coef = model.coef_[0]  # shape: (n_features,)
-
-    # Pozitif coef → REAL habere işaret eder
-    # Negatif coef → FAKE habere işaret eder
-    top_fake_idx = np.argsort(coef)[:top_n]          # En negatif = Fake
-    top_real_idx = np.argsort(coef)[::-1][:top_n]    # En pozitif = Real
-
-    fake_words = [(feature_names[i], float(-coef[i])) for i in top_fake_idx]
-    real_words = [(feature_names[i], float(coef[i]))  for i in top_real_idx]
-
-    return {
-        "fake_words": fake_words,
-        "real_words": real_words,
-        "method": "logistic_regression",
-    }
-
-
-def _get_top_words_from_rf(model, vectorizer, top_n: int = 15) -> dict:
-    """
-    RandomForest modelinden feature importance'a göre kelimeleri çıkarır.
-    RF'de yön (sahte/gerçek) ayırt edilemez; en önemli kelimeler döner.
-
-    Returns
-    -------
-    dict
-        {
-            "top_words":  [(word, score), ...],
-            "method": "random_forest"
-        }
-    """
-    feature_names = np.array(vectorizer.get_feature_names_out())
-    importances   = model.feature_importances_
-
-    top_idx   = np.argsort(importances)[::-1][:top_n]
-    top_words = [(feature_names[i], float(importances[i])) for i in top_idx]
-
-    return {
-        "top_words": top_words,
-        "method": "random_forest",
-    }
-
-
-def get_word_importance(model_dir: str, top_n: int = 10) -> dict | None:
-    """
-    Yüklü modele göre kelime önemlerini döner.
-
-    Parameters
-    ----------
-    model_dir : str
-        model.pkl ve vectorizer.pkl'ın bulunduğu dizin.
-    top_n : int
-        Her kategoriden kaç kelime gösterileceği.
-
-    Returns
-    -------
-    dict veya None
-        Başarılıysa:
-            {
-                "success": True,
-                "method":  str,
-                "fake_words": [(word, score), ...] | None,
-                "real_words": [(word, score), ...] | None,
-                "top_words":  [(word, score), ...] | None,  # RF için
-            }
-        Başarısızsa:
-            {"success": False, "error": str}
-    """
-    loaded = _load_model_and_vectorizer(model_dir)
-    if loaded is None:
-        return {"success": False, "error": "Model veya vectorizer bulunamadı."}
-
-    model, vectorizer = loaded
-
-    # hasattr ile model tipini belirle
-    model_class = type(model).__name__
-
-    try:
-        if hasattr(model, "coef_"):
-            # LogisticRegression
-            result = _get_top_words_from_lr(model, vectorizer, top_n)
-            return {"success": True, **result}
-
-        elif hasattr(model, "feature_importances_"):
-            # RandomForest veya benzeri ensemble
-            result = _get_top_words_from_rf(model, vectorizer, top_n)
-            return {"success": True, **result}
-
-        else:
-            return {
-                "success": False,
-                "error": f"'{model_class}' modeli için kelime önemi desteklenmiyor.",
-            }
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-def get_text_word_scores(text: str, model_dir: str, top_n: int = 10) -> dict | None:
-    """
-    Verilen metin içindeki kelimelerin modeldeki ağırlıklarını döner.
-    Hangi kelimeler metinde geçiyor ve bunlar ne kadar etkili?
+    Bir analizi veritabanına kaydeder.
 
     Parameters
     ----------
     text : str
-        Analiz edilecek metin.
-    model_dir : str
-        model.pkl ve vectorizer.pkl dizini.
-    top_n : int
-        Sonuç listesindeki kelime sayısı.
+        Analiz edilen metin.
+    result : str
+        'FAKE' veya 'REAL'.
+    confidence : float
+        0.0–100.0 güven skoru.
+    risk_level : str
+        Risk seviyesi etiketi.
+    url : str
+        Eğer URL'den geldiyse kaynak URL.
+    domain : str
+        Kaynak domain.
+    source_type : str
+        'text' veya 'url'.
+    db_path : str
+        Veritabanı dosya yolu.
+    snippet_len : int
+        Özet için metin kısaltma uzunluğu.
 
     Returns
     -------
-    dict veya None
+    int
+        Yeni kaydın ID'si.
     """
-    loaded = _load_model_and_vectorizer(model_dir)
-    if loaded is None:
-        return None
+    init_db(db_path)
 
-    model, vectorizer = loaded
+    snippet = text[:snippet_len] + ("..." if len(text) > snippet_len else "")
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if not hasattr(model, "coef_"):
-        return None  # Sadece LR destekleniyor
-
+    conn = _get_conn(db_path)
     try:
-        feature_names = np.array(vectorizer.get_feature_names_out())
-        coef          = model.coef_[0]
+        cursor = conn.execute(
+            """
+            INSERT INTO analyses
+                (created_at, source_type, url, domain, text_snippet, full_text,
+                 result, confidence, risk_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (created_at, source_type, url, domain, snippet, text,
+             result, confidence, risk_level),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
 
-        # Metni transform et
-        vec = vectorizer.transform([text])
-        nonzero_indices = vec.nonzero()[1]
 
-        word_scores = []
-        for idx in nonzero_indices:
-            word  = feature_names[idx]
-            score = coef[idx]
-            tf    = float(vec[0, idx])
-            word_scores.append({
-                "word":      word,
-                "coef":      float(score),
-                "tf":        tf,
-                "impact":    float(score * tf),
-                "direction": "gerçek" if score > 0 else "sahte",
-            })
+# ─── Sorgulama ───────────────────────────────────────────────────────────────
 
-        # En etkilileri sırala
-        word_scores.sort(key=lambda x: abs(x["impact"]), reverse=True)
+def get_history(
+    filter_result: str = "Tümü",   # 'Tümü' | 'FAKE' | 'REAL'
+    search_query: str = "",
+    limit: int = 100,
+    db_path: str = _DEFAULT_DB_PATH,
+) -> list[dict]:
+    """
+    Geçmiş analizleri döner.
+
+    Parameters
+    ----------
+    filter_result : str
+        'Tümü', 'FAKE' veya 'REAL'.
+    search_query : str
+        Metin/URL içinde arama yapılır.
+    limit : int
+        Maksimum kayıt sayısı.
+    db_path : str
+        Veritabanı dosya yolu.
+
+    Returns
+    -------
+    list[dict]
+        Her analiz bir dict olarak döner.
+    """
+    init_db(db_path)
+
+    conditions = []
+    params: list = []
+
+    if filter_result in ("FAKE", "REAL"):
+        conditions.append("result = ?")
+        params.append(filter_result)
+
+    if search_query.strip():
+        conditions.append("(text_snippet LIKE ? OR url LIKE ? OR domain LIKE ?)")
+        q = f"%{search_query.strip()}%"
+        params.extend([q, q, q])
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    conn = _get_conn(db_path)
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT id, created_at, source_type, url, domain,
+                   text_snippet, result, confidence, risk_level
+            FROM analyses
+            {where}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            params + [limit],
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_stats(db_path: str = _DEFAULT_DB_PATH) -> dict:
+    """
+    Genel istatistikleri döner.
+
+    Returns
+    -------
+    dict
+        {
+            "total": int,
+            "fake_count": int,
+            "real_count": int,
+            "fake_pct": float,
+            "real_pct": float,
+            "avg_confidence": float,
+        }
+    """
+    init_db(db_path)
+
+    conn = _get_conn(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*)                                           AS total,
+                SUM(CASE WHEN result='FAKE' THEN 1 ELSE 0 END)    AS fake_count,
+                SUM(CASE WHEN result='REAL' THEN 1 ELSE 0 END)    AS real_count,
+                AVG(confidence)                                    AS avg_confidence
+            FROM analyses
+            """
+        ).fetchone()
+
+        total   = row["total"] or 0
+        fake    = row["fake_count"] or 0
+        real    = row["real_count"] or 0
+        avg_c   = row["avg_confidence"] or 0.0
 
         return {
-            "success":    True,
-            "word_scores": word_scores[:top_n],
-            "method":     "text_specific",
+            "total":          total,
+            "fake_count":     fake,
+            "real_count":     real,
+            "fake_pct":       round(fake / total * 100, 1) if total else 0.0,
+            "real_pct":       round(real / total * 100, 1) if total else 0.0,
+            "avg_confidence": round(avg_c, 1),
         }
+    finally:
+        conn.close()
 
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+
+def delete_record(record_id: int, db_path: str = _DEFAULT_DB_PATH) -> bool:
+    """Belirli bir kaydı siler. Başarılıysa True döner."""
+    conn = _get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM analyses WHERE id = ?", (record_id,))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def clear_all(db_path: str = _DEFAULT_DB_PATH) -> None:
+    """Tüm geçmişi temizler."""
+    conn = _get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM analyses")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ─── CSV Dışa Aktarma ─────────────────────────────────────────────────────────
+
+def export_to_csv(
+    filter_result: str = "Tümü",
+    search_query: str = "",
+    db_path: str = _DEFAULT_DB_PATH,
+) -> str:
+    """
+    Geçmiş analizleri CSV formatında string olarak döner.
+    Streamlit'in st.download_button() ile kullanmak için uygundur.
+
+    Returns
+    -------
+    str
+        CSV içeriği.
+    """
+    rows = get_history(
+        filter_result=filter_result,
+        search_query=search_query,
+        limit=10_000,
+        db_path=db_path,
+    )
+
+    if not rows:
+        return "id,tarih,kaynak_tipi,url,domain,metin_ozeti,sonuc,guven_skoru,risk_seviyesi\n"
+
+    output = io.StringIO()
+    fieldnames = ["id", "created_at", "source_type", "url", "domain",
+                  "text_snippet", "result", "confidence", "risk_level"]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+
+    return output.getvalue()
