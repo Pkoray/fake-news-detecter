@@ -6,7 +6,6 @@ Eğitilmiş model ve vektörleştirici kullanılarak
 yeni haber metinleri üzerinde tahmin yapar.
 """
 
-
 import os
 import sys
 from typing import Tuple
@@ -14,14 +13,20 @@ import joblib
 
 sys.path.insert(0, os.path.dirname(__file__))
 from preprocess import preprocess_text, load_vectorizer
-# Model yolu
-_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "model.pkl")
+
+# Model yolu — hem model/ klasöründe hem kök dizinde ara
+_BASE = os.path.dirname(os.path.dirname(__file__))  # proje kökü
+_MODEL_PATH_DEFAULT = os.path.join(_BASE, "model", "model.pkl")
+if not os.path.exists(_MODEL_PATH_DEFAULT):
+    _MODEL_PATH_DEFAULT = os.path.join(_BASE, "model.pkl")
 
 
-def load_model(path: str = _MODEL_PATH):
+def load_model(path: str = None):
     """
     Kaydedilmiş modeli yükler.
     """
+    if path is None:
+        path = _MODEL_PATH_DEFAULT
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Model bulunamadı: {path}\n"
