@@ -73,7 +73,10 @@ _en_stops = set(stopwords.words("english"))
 # Birleşik Türkçe + İngilizce stopword seti
 STOP_WORDS = TURKISH_STOPWORDS | _en_stops
 
-VECTORIZER_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "vectorizer.pkl")
+_BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # proje kökü
+VECTORIZER_PATH = os.path.join(_BASE_DIR, "model", "vectorizer.pkl")
+if not os.path.exists(VECTORIZER_PATH):
+    VECTORIZER_PATH = os.path.join(_BASE_DIR, "vectorizer.pkl")
 
 
 def clean_text(text: str) -> str:
