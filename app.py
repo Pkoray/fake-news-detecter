@@ -389,9 +389,14 @@ def main() -> None:
 
     st.markdown("---")
 
-    # Model durumu kontrolü
-    model_path = os.path.join(os.path.dirname(__file__), "model", "model.pkl")
-    vectorizer_path = os.path.join(os.path.dirname(__file__), "model", "vectorizer.pkl")
+    # Model durumu kontrolü — hem model/ klasöründe hem kök dizinde ara
+    _base = os.path.dirname(__file__)
+    model_path = os.path.join(_base, "model", "model.pkl")
+    vectorizer_path = os.path.join(_base, "model", "vectorizer.pkl")
+    if not os.path.exists(model_path):
+        model_path = os.path.join(_base, "model.pkl")
+    if not os.path.exists(vectorizer_path):
+        vectorizer_path = os.path.join(_base, "vectorizer.pkl")
     model_ready = os.path.exists(model_path) and os.path.exists(vectorizer_path)
 
     if not model_ready:
