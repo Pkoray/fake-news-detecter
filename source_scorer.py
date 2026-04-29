@@ -1,255 +1,301 @@
 """
-preprocess.py
--------------
-Haber metinleri için NLP ön işleme modülü.
-Türkçe ve İngilizce ikidilli destek sunar.
-Lowercase, noktalama temizleme, stopword kaldırma,
-tokenization ve TF-IDF vektörleştirme işlemlerini içerir.
+source_scorer.py
+----------------
+Haber kaynağının domain'ine göre güvenilirlik skoru döner.
+Statik bir veritabanı kullanır; dış API gerektirmez.
+
+Skor sistemi:
+    9–10 : Çok güvenilir (büyük ana akım medya, resmi kaynaklar)
+    7–8  : Güvenilir (köklü gazeteler, ajanslar)
+    5–6  : Orta (partizan ama gazetecilik standartlarına uyan)
+    3–4  : Düşük (sarı basın, doğrulanmamış iddialar)
+    1–2  : Çok düşük (dezenformasyon / propaganda)
 """
 
-import re
-import string
-import pandas as pd
-import nltk
-from nltk.corpus import stopwords
-from sklearn.feature_extraction.text import TfidfVectorizer
-import joblib
-import os
+from __future__ import annotations
 
-# Gerekli NLTK verilerini indir
-nltk.download("stopwords", quiet=True)
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
+from typing import TypedDict
 
-# ── TÜRKÇE STOPWORD LİSTESİ ──────────────────────────────────────────────────
-TURKISH_STOPWORDS = {
-    "ve", "ile", "bir", "bu", "da", "de", "mi", "mu", "mü", "mı",
-    "için", "ama", "ya", "ki", "ne", "en", "çok", "daha", "hem",
-    "veya", "ancak", "fakat", "lakin", "oysa", "halbuki",
-    "şu", "biz", "siz", "onlar", "ben", "sen", "benim",
-    "senin", "onun", "bizim", "sizin", "onların", "bana", "sana",
-    "ona", "bize", "size", "onlara", "bende", "sende", "onda",
-    "bizde", "sizde", "onlarda", "benden", "senden", "ondan",
-    "olan", "olarak", "oldu", "olur", "olması", "olduğu",
-    "olacak", "edildi", "edilir", "edilmesi", "edilecek",
-    "var", "yok", "gibi", "kadar", "göre", "karşı", "doğru",
-    "önce", "sonra", "içinde", "dışında", "üzerinde", "altında",
-    "yanında", "arasında", "üzerine", "altına", "içine", "dışına",
-    "hakkında", "tarafından", "itibaren", "beri", "rağmen",
-    "üzere", "dolayı", "nedeniyle", "yüzünden", "sayesinde",
-    "böyle", "şöyle", "öyle", "nasıl", "neden", "niçin",
-    "nerede", "nereden", "nereye", "hangi", "kim", "kimin",
-    "her", "hiç", "bazı", "birkaç", "bütün", "tüm", "hepsi",
-    "çeşitli", "farklı", "diğer", "sadece", "yalnızca",
-    "bile", "dahi", "zaten", "artık", "henüz", "hala", "pek",
-    "oldukça", "fazla", "az", "biraz", "asla", "kesinlikle",
-    "mutlaka", "elbette", "tabii", "ise", "diye", "diyerek",
-    "şey", "şeyi", "şeyde", "şeye", "şeyden", "şeyler",
-    "kez", "kere", "defa", "sefer", "yıl", "ay", "gün", "saat",
-    "söyledi", "belirtti", "açıkladı", "ifade", "etti", "dedi",
-    "konuştu", "aktardı", "vurguladı", "paylaştı", "yer", "yere",
-    "olup", "üst", "alt", "ön", "arka", "iç", "dış", "yan",
-    "bunun", "şunun", "bunlar", "şunlar", "bunları", "şunları",
-    "yapılan", "yapılacak", "yapılmış", "yapıyor", "yapıldı",
-    "verilen", "verilecek", "verilmiş", "veriyor", "verildi",
-    "alınan", "alınacak", "alınmış", "alıyor", "alındı",
-    "olduğunu", "olduğu", "olduğunda", "olduğundan",
-    "olacağını", "olacağı", "olmadığını", "olmadığı",
-    "ettiğini", "ettiği", "edeceğini", "edeceği",
-    "çünkü", "zira", "nitekim", "özellikle", "ayrıca",
-    "amacıyla", "kapsamında", "çerçevesinde", "sürecinde",
-    "konusunda", "durumunda", "noktasında", "açısından",
-    "üzerinden", "yoluyla", "vasıtasıyla", "aracılığıyla",
-    "sonucunda", "ardından", "öncesinde", "sonrasında",
-    "birlikte", "beraber", "beraberinde", "karşılıklı",
-    "olduğu", "olduğunu", "olduklarını", "olmaktadır",
-    "edilmektedir", "bulunmaktadır", "gelmektedir",
-    "görmektedir", "almaktadır", "vermektedir",
+
+class SourceInfo(TypedDict):
+    score: int           # 1-10
+    category: str        # "Ana Akım" | "Bağımsız" | "Sarı Basın" | "Ajans" | "Resmi" | "Uluslararası"
+    bias: str            # "Sol" | "Sağ" | "Merkez" | "Belirsiz"
+    note: str            # Kısa not
+
+
+# ─── Türk ve uluslararası haber kaynakları veritabanı ────────────────────────
+
+_SOURCE_DB: dict[str, SourceInfo] = {
+
+    # ── Haber Ajansları ────────────────────────────────────────────
+    "aa.com.tr": {
+        "score": 7, "category": "Ajans", "bias": "Merkez",
+        "note": "Anadolu Ajansı — Türkiye'nin resmi haber ajansı. Ulusal konularda hükümet yakın yayın yapabilir.",
+    },
+    "dha.com.tr": {
+        "score": 7, "category": "Ajans", "bias": "Merkez",
+        "note": "Demirören Haber Ajansı — Geniş kapsamlı, ajans haberciliği.",
+    },
+    "iha.com.tr": {
+        "score": 7, "category": "Ajans", "bias": "Merkez",
+        "note": "İhlas Haber Ajansı — Geniş kapsamlı haber ajansı.",
+    },
+    "bianet.org": {
+        "score": 8, "category": "Bağımsız", "bias": "Sol",
+        "note": "Bağımsız gazetecilik. Basın özgürlüğü ve azınlık hakları konularında kapsamlı.",
+    },
+
+    # ── Ana Akım Gazeteler ─────────────────────────────────────────
+    "hurriyet.com.tr": {
+        "score": 7, "category": "Ana Akım", "bias": "Merkez",
+        "note": "Hürriyet — Türkiye'nin en köklü gazetelerinden.",
+    },
+    "milliyet.com.tr": {
+        "score": 7, "category": "Ana Akım", "bias": "Merkez",
+        "note": "Milliyet — Uzun geçmişe sahip ulusal gazete.",
+    },
+    "sabah.com.tr": {
+        "score": 6, "category": "Ana Akım", "bias": "Sağ",
+        "note": "Sabah — Geniş okuyucu kitlesine sahip; hükümete yakın yayın çizgisi.",
+    },
+    "cumhuriyet.com.tr": {
+        "score": 7, "category": "Ana Akım", "bias": "Sol",
+        "note": "Cumhuriyet — Türkiye'nin en eski gazetelerinden; muhalif çizgi.",
+    },
+    "haberturk.com": {
+        "score": 7, "category": "Ana Akım", "bias": "Merkez",
+        "note": "Habertürk — TV kanalı ve internet haberciliği.",
+    },
+    "ntv.com.tr": {
+        "score": 7, "category": "Ana Akım", "bias": "Merkez",
+        "note": "NTV — Köklü haber kanalı.",
+    },
+    "cnnturk.com": {
+        "score": 7, "category": "Ana Akım", "bias": "Merkez",
+        "note": "CNN Türk — Uluslararası CNN franchise'ı.",
+    },
+    "sozcu.com.tr": {
+        "score": 6, "category": "Ana Akım", "bias": "Sol",
+        "note": "Sözcü — Muhalif, milliyetçi sol çizgi.",
+    },
+    "posta.com.tr": {
+        "score": 5, "category": "Ana Akım", "bias": "Merkez",
+        "note": "Posta — Popüler, magazin ağırlıklı.",
+    },
+    "star.com.tr": {
+        "score": 5, "category": "Ana Akım", "bias": "Sağ",
+        "note": "Star — Hükümete yakın yayın politikası.",
+    },
+    "yenisafak.com": {
+        "score": 5, "category": "Ana Akım", "bias": "Sağ",
+        "note": "Yeni Şafak — Muhafazakâr-İslamcı çizgi.",
+    },
+    "turkiyegazetesi.com.tr": {
+        "score": 5, "category": "Ana Akım", "bias": "Sağ",
+        "note": "Türkiye Gazetesi — Muhafazakâr yayın.",
+    },
+    "takvim.com.tr": {
+        "score": 4, "category": "Sarı Basın", "bias": "Sağ",
+        "note": "Takvim — Magazin ve sarı basın eğilimi; abartılı başlıklar.",
+    },
+    "aksam.com.tr": {
+        "score": 5, "category": "Ana Akım", "bias": "Sağ",
+        "note": "Akşam — Milliyetçi çizgi.",
+    },
+    "gazeteduvar.com.tr": {
+        "score": 7, "category": "Bağımsız", "bias": "Sol",
+        "note": "Gazete Duvar — Bağımsız dijital yayın organı.",
+    },
+    "t24.com.tr": {
+        "score": 7, "category": "Bağımsız", "bias": "Sol",
+        "note": "T24 — Muhalif dijital haber platformu.",
+    },
+    "diken.com.tr": {
+        "score": 6, "category": "Bağımsız", "bias": "Sol",
+        "note": "Diken — Bağımsız, eleştirel haber.",
+    },
+    "birgun.net": {
+        "score": 6, "category": "Bağımsız", "bias": "Sol",
+        "note": "BirGün — Sol demokratik çizgi.",
+    },
+    "evrensel.net": {
+        "score": 6, "category": "Bağımsız", "bias": "Sol",
+        "note": "Evrensel — Emek ve sol odaklı.",
+    },
+    "medyascope.tv": {
+        "score": 8, "category": "Bağımsız", "bias": "Merkez",
+        "note": "Medyascope — Bağımsız, araştırmacı gazetecilik.",
+    },
+    "gazeteoksijen.com": {
+        "score": 6, "category": "Bağımsız", "bias": "Merkez",
+        "note": "Oksijen — Araştırmacı habercilik.",
+    },
+
+    # ── Spor ──────────────────────────────────────────────────────
+    "sporx.com": {
+        "score": 7, "category": "Ana Akım", "bias": "Belirsiz",
+        "note": "Sporx — Spor haberciliğinde güvenilir.",
+    },
+    "fanatik.com.tr": {
+        "score": 6, "category": "Ana Akım", "bias": "Belirsiz",
+        "note": "Fanatik — Spor gazetesi.",
+    },
+    "fotomac.com.tr": {
+        "score": 6, "category": "Ana Akım", "bias": "Belirsiz",
+        "note": "Fotomaç — Spor odaklı yayın.",
+    },
+
+    # ── Resmi ve Akademik ─────────────────────────────────────────
+    "tccb.gov.tr": {
+        "score": 9, "category": "Resmi", "bias": "Merkez",
+        "note": "Türkiye Cumhurbaşkanlığı resmi sitesi.",
+    },
+    "tbmm.gov.tr": {
+        "score": 9, "category": "Resmi", "bias": "Merkez",
+        "note": "Türkiye Büyük Millet Meclisi resmi sitesi.",
+    },
+    "saglik.gov.tr": {
+        "score": 9, "category": "Resmi", "bias": "Merkez",
+        "note": "Türkiye Sağlık Bakanlığı.",
+    },
+    "tuik.gov.tr": {
+        "score": 9, "category": "Resmi", "bias": "Merkez",
+        "note": "Türkiye İstatistik Kurumu.",
+    },
+
+    # ── Uluslararası ──────────────────────────────────────────────
+    "bbc.com": {
+        "score": 9, "category": "Uluslararası", "bias": "Merkez",
+        "note": "BBC — Küresel standartlarda gazetecilik.",
+    },
+    "bbc.co.uk": {
+        "score": 9, "category": "Uluslararası", "bias": "Merkez",
+        "note": "BBC — Küresel standartlarda gazetecilik.",
+    },
+    "reuters.com": {
+        "score": 10, "category": "Uluslararası", "bias": "Merkez",
+        "note": "Reuters — Dünyanın en güvenilir haber ajanslarından.",
+    },
+    "apnews.com": {
+        "score": 10, "category": "Uluslararası", "bias": "Merkez",
+        "note": "Associated Press — Küresel haber standardı.",
+    },
+    "theguardian.com": {
+        "score": 9, "category": "Uluslararası", "bias": "Sol",
+        "note": "The Guardian — Araştırmacı gazetecilik.",
+    },
+    "nytimes.com": {
+        "score": 9, "category": "Uluslararası", "bias": "Sol",
+        "note": "New York Times — Küresel referans gazete.",
+    },
+    "aljazeera.com": {
+        "score": 7, "category": "Uluslararası", "bias": "Merkez",
+        "note": "Al Jazeera — Geniş uluslararası kapsam; Körfez etkisi.",
+    },
+    "dw.com": {
+        "score": 8, "category": "Uluslararası", "bias": "Merkez",
+        "note": "Deutsche Welle — Alman devlet yayın kuruluşu.",
+    },
+
+    # ── Düşük Güvenilirlik ────────────────────────────────────────
+    "odatv.com": {
+        "score": 4, "category": "Sarı Basın", "bias": "Sol",
+        "note": "Oda TV — Sık sık doğrulanmamış iddialar.",
+    },
+    "haber7.com": {
+        "score": 4, "category": "Sarı Basın", "bias": "Sağ",
+        "note": "Haber7 — Clickbait başlıklar, abartılı haberler.",
+    },
+    "internethaber.com": {
+        "score": 3, "category": "Sarı Basın", "bias": "Belirsiz",
+        "note": "İnternet Haber — Doğrulama zayıf, tıklama odaklı.",
+    },
 }
 
-# İngilizce stopword'ler
-_en_stops = set(stopwords.words("english"))
 
-# Birleşik Türkçe + İngilizce stopword seti
-STOP_WORDS = TURKISH_STOPWORDS | _en_stops
-
-VECTORIZER_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "vectorizer.pkl")
-
-
-def clean_text(text: str) -> str:
+def score_source(domain: str) -> dict:
     """
-    Ham metni temizler: küçük harfe çevirir, noktalama ve
-    sayıları kaldırır. Türkçe karakterleri (ğ, ü, ş, ı, ö, ç) korur.
+    Verilen domain için güvenilirlik bilgisi döner.
 
     Parameters
     ----------
-    text : str
-        Temizlenecek ham metin.
+    domain : str
+        Kaynak domain (örn. 'sabah.com.tr').
 
     Returns
     -------
-    str
-        Temizlenmiş metin.
+    dict
+        {
+            "known": bool,
+            "score": int,           # 1–10
+            "score_pct": int,       # 0–100 (görselleştirme için)
+            "category": str,
+            "bias": str,
+            "note": str,
+            "color": str,           # CSS rengi
+            "emoji": str,           # Hızlı görsel
+        }
     """
-    if not isinstance(text, str):
-        return ""
+    domain = domain.lower().strip()
 
-    # Küçük harfe çevir
-    text = text.lower()
+    # 'www.' ön ekini kaldır
+    if domain.startswith("www."):
+        domain = domain[4:]
 
-    # URL'leri kaldır
-    text = re.sub(r"http\S+|www\S+|https\S+", "", text)
+    info = _SOURCE_DB.get(domain)
 
-    # HTML tag'lerini kaldır
-    text = re.sub(r"<.*?>", "", text)
+    if info is None:
+        return {
+            "known": False,
+            "score": 0,
+            "score_pct": 0,
+            "category": "Bilinmiyor",
+            "bias": "Belirsiz",
+            "note": "Bu kaynak veritabanımızda bulunmuyor. Haberi bağımsız kaynaklardan doğrulayın.",
+            "color": "#808080",
+            "emoji": "❓",
+        }
 
-    # Noktalama kaldır — Türkçe harfleri koru
-    text = re.sub(r"[^\w\sğüşıöçğüşıöç]", " ", text, flags=re.UNICODE)
-
-    # Sayıları kaldır
-    text = re.sub(r"\d+", "", text)
-
-    # Fazla boşlukları temizle
-    text = re.sub(r"\s+", " ", text).strip()
-
-    return text
-
-
-def remove_stopwords(text: str) -> str:
-    """
-    Metinden Türkçe ve İngilizce stopword'leri kaldırır.
-
-    Parameters
-    ----------
-    text : str
-        Stopword'lerden arındırılacak metin.
-
-    Returns
-    -------
-    str
-        Stopword'leri kaldırılmış metin.
-    """
-    tokens = text.split()
-    filtered = [
-        word for word in tokens
-        if word not in STOP_WORDS and len(word) > 2
-    ]
-    return " ".join(filtered)
+    score = info["score"]
+    return {
+        "known": True,
+        "score": score,
+        "score_pct": score * 10,
+        "category": info["category"],
+        "bias": info["bias"],
+        "note": info["note"],
+        "color": _score_to_color(score),
+        "emoji": _score_to_emoji(score),
+    }
 
 
-def preprocess_text(text: str) -> str:
-    """
-    Tam NLP ön işleme pipeline'ını uygular:
-    clean_text → remove_stopwords
-    Türkçe ve İngilizce metinler için çalışır.
-
-    Parameters
-    ----------
-    text : str
-        İşlenecek ham haber metni.
-
-    Returns
-    -------
-    str
-        Tamamen işlenmiş metin.
-    """
-    text = clean_text(text)
-    text = remove_stopwords(text)
-    return text
+def _score_to_color(score: int) -> str:
+    if score >= 9:
+        return "#00c851"
+    elif score >= 7:
+        return "#7bcf7b"
+    elif score >= 5:
+        return "#ffd700"
+    elif score >= 3:
+        return "#ff8c00"
+    else:
+        return "#ff4b4b"
 
 
-def preprocess_dataframe(df: pd.DataFrame, text_col: str = "text") -> pd.Series:
-    """
-    DataFrame içindeki metin sütununa ön işleme uygular.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        İşlenecek veri çerçevesi.
-    text_col : str
-        Metin sütununun adı.
-
-    Returns
-    -------
-    pd.Series
-        İşlenmiş metin serisi.
-    """
-    print(f"[INFO] {len(df)} satır için metin ön işleme uygulanıyor...")
-    processed = df[text_col].fillna("").apply(preprocess_text)
-    print("[INFO] Ön işleme tamamlandı.")
-    return processed
+def _score_to_emoji(score: int) -> str:
+    if score >= 9:
+        return "✅"
+    elif score >= 7:
+        return "🟢"
+    elif score >= 5:
+        return "🟡"
+    elif score >= 3:
+        return "🟠"
+    else:
+        return "🔴"
 
 
-def build_tfidf_vectorizer(max_features: int = 50000, ngram_range: tuple = (1, 2)) -> TfidfVectorizer:
-    """
-    TF-IDF vektörleştirici oluşturur.
-    Türkçe karakterleri destekleyen token_pattern kullanır.
-
-    Parameters
-    ----------
-    max_features : int
-        Maksimum özellik (kelime) sayısı.
-    ngram_range : tuple
-        Unigram ve bigram için (1, 2).
-
-    Returns
-    -------
-    TfidfVectorizer
-        Yapılandırılmış TF-IDF vektörleştirici.
-    """
-    return TfidfVectorizer(
-        max_features=max_features,
-        ngram_range=ngram_range,
-        sublinear_tf=True,
-        min_df=2,
-        max_df=0.95,
-        analyzer="word",
-        token_pattern=r"(?u)\b\w+\b",
-    )
-
-
-def fit_and_save_vectorizer(texts: pd.Series, vectorizer: TfidfVectorizer) -> TfidfVectorizer:
-    """
-    TF-IDF vektörleştiricisini eğitim verisi üzerinde fit eder ve kaydeder.
-
-    Parameters
-    ----------
-    texts : pd.Series
-        Fit edilecek metin serisi.
-    vectorizer : TfidfVectorizer
-        Fit edilecek vektörleştirici.
-
-    Returns
-    -------
-    TfidfVectorizer
-        Fit edilmiş vektörleştirici.
-    """
-    print("[INFO] TF-IDF vektörleştirici eğitiliyor...")
-    vectorizer.fit(texts)
-
-    os.makedirs(os.path.dirname(VECTORIZER_PATH), exist_ok=True)
-    joblib.dump(vectorizer, VECTORIZER_PATH)
-    print(f"[INFO] Vektörleştirici kaydedildi: {VECTORIZER_PATH}")
-    return vectorizer
-
-
-def load_vectorizer() -> TfidfVectorizer:
-    """
-    Kaydedilmiş TF-IDF vektörleştiricisini yükler.
-
-    Returns
-    -------
-    TfidfVectorizer
-        Yüklenmiş vektörleştirici.
-
-    Raises
-    ------
-    FileNotFoundError
-        Vektörleştirici dosyası bulunamazsa.
-    """
-    if not os.path.exists(VECTORIZER_PATH):
-        raise FileNotFoundError(
-            f"Vektörleştirici bulunamadı: {VECTORIZER_PATH}\n"
-            "Lütfen önce 'python src/train_model.py' komutunu çalıştırın."
-        )
-    return joblib.load(VECTORIZER_PATH)
+def get_all_sources() -> dict[str, SourceInfo]:
+    """Tüm kayıtlı kaynakları döner (geliştirici/debug için)."""
+    return dict(_SOURCE_DB)
