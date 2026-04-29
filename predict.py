@@ -6,13 +6,28 @@ Eğitilmiş model ve vektörleştirici kullanılarak
 yeni haber metinleri üzerinde tahmin yapar.
 """
 
+
 import os
 import sys
 from typing import Tuple
+import joblib
 
 sys.path.insert(0, os.path.dirname(__file__))
 from preprocess import preprocess_text, load_vectorizer
-from train_model import load_model
+# Model yolu
+_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "model", "model.pkl")
+
+
+def load_model(path: str = _MODEL_PATH):
+    """
+    Kaydedilmiş modeli yükler.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Model bulunamadı: {path}\n"
+            "Lütfen önce 'python src/train_model.py' komutunu çalıştırın."
+        )
+    return joblib.load(path)
 
 # Label haritası
 LABEL_MAP = {0: "FAKE NEWS", 1: "REAL NEWS"}
