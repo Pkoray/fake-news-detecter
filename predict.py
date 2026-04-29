@@ -1,291 +1,190 @@
 """
-history.py
+predict.py
 ----------
-SQLite tabanlı analiz geçmişi yönetimi.
-Dış bağımlılık yok; yalnızca Python standart kütüphanesi kullanılır.
+Tahmin modülü.
+Eğitilmiş model ve vektörleştirici kullanılarak
+yeni haber metinleri üzerinde tahmin yapar.
 """
 
-from __future__ import annotations
-
-import csv
-import io
 import os
-import sqlite3
-from datetime import datetime
+import sys
+from typing import Tuple
+
+sys.path.insert(0, os.path.dirname(__file__))
+from preprocess import preprocess_text, load_vectorizer
+from train_model import load_model
+
+# Label haritası
+LABEL_MAP = {0: "FAKE NEWS", 1: "REAL NEWS"}
+LABEL_EMOJI = {0: "🔴", 1: "🟢"}
+LABEL_COLOR = {0: "fake", 1: "real"}
 
 
-# Varsayılan veritabanı yolu
-_DEFAULT_DB_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),  # proje kökü
-    "data",
-    "history.db",
-)
-
-
-# ─── Veritabanı kurulumu ──────────────────────────────────────────────────────
-
-def _get_conn(db_path: str = _DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """SQLite bağlantısı döner; veritabanı yoksa oluşturur."""
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row  # Sütun ismiyle erişim
-    return conn
-
-
-def init_db(db_path: str = _DEFAULT_DB_PATH) -> None:
+def predict_news(text: str) -> Tuple[str, float, float]:
     """
-    Gerekli tabloyu oluşturur (yoksa).
-    Uygulama başlarken bir kez çağrılmalıdır.
-    """
-    conn = _get_conn(db_path)
-    try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS analyses (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at    TEXT    NOT NULL,
-                source_type   TEXT    NOT NULL DEFAULT 'text',   -- 'text' | 'url'
-                url           TEXT,
-                domain        TEXT,
-                text_snippet  TEXT    NOT NULL,
-                full_text     TEXT,
-                result        TEXT    NOT NULL,   -- 'FAKE' | 'REAL'
-                confidence    REAL    NOT NULL,   -- 0.0–100.0
-                risk_level    TEXT
-            )
-        """)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# ─── Kaydetme ────────────────────────────────────────────────────────────────
-
-def save_analysis(
-    text: str,
-    result: str,
-    confidence: float,
-    risk_level: str = "",
-    url: str = "",
-    domain: str = "",
-    source_type: str = "text",
-    db_path: str = _DEFAULT_DB_PATH,
-    snippet_len: int = 200,
-) -> int:
-    """
-    Bir analizi veritabanına kaydeder.
+    Verilen haber metninin gerçek mi sahte mi olduğunu tahmin eder.
 
     Parameters
     ----------
     text : str
-        Analiz edilen metin.
-    result : str
-        'FAKE' veya 'REAL'.
-    confidence : float
-        0.0–100.0 güven skoru.
-    risk_level : str
-        Risk seviyesi etiketi.
-    url : str
-        Eğer URL'den geldiyse kaynak URL.
-    domain : str
-        Kaynak domain.
-    source_type : str
-        'text' veya 'url'.
-    db_path : str
-        Veritabanı dosya yolu.
-    snippet_len : int
-        Özet için metin kısaltma uzunluğu.
+        Tahmin edilecek haber metni.
 
     Returns
     -------
-    int
-        Yeni kaydın ID'si.
+    Tuple[str, float, float]
+        (label, fake_probability, real_probability)
+        label: 'FAKE NEWS' veya 'REAL NEWS'
+        fake_probability: Sahte olma olasılığı (0-1)
+        real_probability: Gerçek olma olasılığı (0-1)
+
+    Raises
+    ------
+    ValueError
+        Metin boş veya çok kısaysa.
     """
-    init_db(db_path)
+    if not text or not text.strip():
+        raise ValueError("Metin boş olamaz!")
 
-    snippet = text[:snippet_len] + ("..." if len(text) > snippet_len else "")
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if len(text.strip()) < 20:
+        raise ValueError("Metin çok kısa! En az 20 karakter girin.")
 
-    conn = _get_conn(db_path)
-    try:
-        cursor = conn.execute(
-            """
-            INSERT INTO analyses
-                (created_at, source_type, url, domain, text_snippet, full_text,
-                 result, confidence, risk_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (created_at, source_type, url, domain, snippet, text,
-             result, confidence, risk_level),
-        )
-        conn.commit()
-        return cursor.lastrowid
-    finally:
-        conn.close()
+    # Model ve vektörleştiriciyi yükle
+    model = load_model()
+    vectorizer = load_vectorizer()
+
+    # Ön işleme
+    processed = preprocess_text(text)
+
+    # TF-IDF dönüşümü
+    text_tfidf = vectorizer.transform([processed])
+
+    # Tahmin
+    prediction = model.predict(text_tfidf)[0]
+    probabilities = model.predict_proba(text_tfidf)[0]
+
+    fake_prob = probabilities[0]
+    real_prob = probabilities[1]
+    label = LABEL_MAP[int(prediction)]
+
+    return label, float(fake_prob), float(real_prob)
 
 
-# ─── Sorgulama ───────────────────────────────────────────────────────────────
-
-def get_history(
-    filter_result: str = "Tümü",   # 'Tümü' | 'FAKE' | 'REAL'
-    search_query: str = "",
-    limit: int = 100,
-    db_path: str = _DEFAULT_DB_PATH,
-) -> list[dict]:
+def predict_batch(texts: list) -> list:
     """
-    Geçmiş analizleri döner.
+    Birden fazla haber metni için toplu tahmin yapar.
 
     Parameters
     ----------
-    filter_result : str
-        'Tümü', 'FAKE' veya 'REAL'.
-    search_query : str
-        Metin/URL içinde arama yapılır.
-    limit : int
-        Maksimum kayıt sayısı.
-    db_path : str
-        Veritabanı dosya yolu.
+    texts : list
+        Tahmin edilecek metin listesi.
 
     Returns
     -------
-    list[dict]
-        Her analiz bir dict olarak döner.
+    list
+        Her metin için (label, fake_prob, real_prob) tuple'larından oluşan liste.
     """
-    init_db(db_path)
+    if not texts:
+        return []
 
-    conditions = []
-    params: list = []
+    model = load_model()
+    vectorizer = load_vectorizer()
 
-    if filter_result in ("FAKE", "REAL"):
-        conditions.append("result = ?")
-        params.append(filter_result)
+    results = []
+    for text in texts:
+        try:
+            processed = preprocess_text(text)
+            text_tfidf = vectorizer.transform([processed])
+            prediction = model.predict(text_tfidf)[0]
+            probabilities = model.predict_proba(text_tfidf)[0]
 
-    if search_query.strip():
-        conditions.append("(text_snippet LIKE ? OR url LIKE ? OR domain LIKE ?)")
-        q = f"%{search_query.strip()}%"
-        params.extend([q, q, q])
+            results.append({
+                "text": text[:100] + "..." if len(text) > 100 else text,
+                "label": LABEL_MAP[int(prediction)],
+                "fake_probability": float(probabilities[0]),
+                "real_probability": float(probabilities[1]),
+                "confidence": float(max(probabilities)),
+            })
+        except Exception as e:
+            results.append({
+                "text": text[:100] + "..." if len(text) > 100 else text,
+                "label": "ERROR",
+                "error": str(e),
+            })
 
-    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-
-    conn = _get_conn(db_path)
-    try:
-        rows = conn.execute(
-            f"""
-            SELECT id, created_at, source_type, url, domain,
-                   text_snippet, result, confidence, risk_level
-            FROM analyses
-            {where}
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            params + [limit],
-        ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
+    return results
 
 
-def get_stats(db_path: str = _DEFAULT_DB_PATH) -> dict:
+def get_prediction_details(text: str) -> dict:
     """
-    Genel istatistikleri döner.
+    Tahmin sonucu ile birlikte ek detayları döndürür.
+
+    Parameters
+    ----------
+    text : str
+        Analiz edilecek haber metni.
 
     Returns
     -------
     dict
-        {
-            "total": int,
-            "fake_count": int,
-            "real_count": int,
-            "fake_pct": float,
-            "real_pct": float,
-            "avg_confidence": float,
-        }
+        label, fake_prob, real_prob, confidence, risk_level
+        ve işlenmiş metin bilgilerini içeren sözlük.
     """
-    init_db(db_path)
+    label, fake_prob, real_prob = predict_news(text)
 
-    conn = _get_conn(db_path)
+    confidence = max(fake_prob, real_prob)
+
+    # Risk seviyesi
+    if fake_prob >= 0.85:
+        risk_level = "Çok Yüksek Risk"
+    elif fake_prob >= 0.65:
+        risk_level = "Yüksek Risk"
+    elif fake_prob >= 0.45:
+        risk_level = "Orta Risk"
+    elif fake_prob >= 0.25:
+        risk_level = "Düşük Risk"
+    else:
+        risk_level = "Çok Düşük Risk"
+
+    processed_text = preprocess_text(text)
+    word_count_original  = len(text.split())
+    word_count_processed = len(processed_text.split())
+
+    return {
+        "label":          label,
+        "fake_probability": round(fake_prob * 100, 2),
+        "real_probability": round(real_prob * 100, 2),
+        "confidence":     round(confidence * 100, 2),
+        "risk_level":     risk_level,
+        "is_fake":        label == "FAKE NEWS",
+        "word_count":     word_count_original,
+        "processed_words": word_count_processed,
+        "emoji":          LABEL_EMOJI[0 if label == "FAKE NEWS" else 1],
+    }
+
+
+# ──────────────────────────────────────────────
+# MAIN (CLI kullanımı için)
+# ──────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fake News Detector — Tahmin Aracı")
+    parser.add_argument("text", type=str, help="Analiz edilecek haber metni")
+    args = parser.parse_args()
+
+    print("\n" + "="*55)
+    print("   FAKE NEWS DETECTOR — TAHMİN")
+    print("="*55)
+
     try:
-        row = conn.execute(
-            """
-            SELECT
-                COUNT(*)                                           AS total,
-                SUM(CASE WHEN result='FAKE' THEN 1 ELSE 0 END)    AS fake_count,
-                SUM(CASE WHEN result='REAL' THEN 1 ELSE 0 END)    AS real_count,
-                AVG(confidence)                                    AS avg_confidence
-            FROM analyses
-            """
-        ).fetchone()
-
-        total   = row["total"] or 0
-        fake    = row["fake_count"] or 0
-        real    = row["real_count"] or 0
-        avg_c   = row["avg_confidence"] or 0.0
-
-        return {
-            "total":          total,
-            "fake_count":     fake,
-            "real_count":     real,
-            "fake_pct":       round(fake / total * 100, 1) if total else 0.0,
-            "real_pct":       round(real / total * 100, 1) if total else 0.0,
-            "avg_confidence": round(avg_c, 1),
-        }
-    finally:
-        conn.close()
-
-
-def delete_record(record_id: int, db_path: str = _DEFAULT_DB_PATH) -> bool:
-    """Belirli bir kaydı siler. Başarılıysa True döner."""
-    conn = _get_conn(db_path)
-    try:
-        conn.execute("DELETE FROM analyses WHERE id = ?", (record_id,))
-        conn.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        conn.close()
-
-
-def clear_all(db_path: str = _DEFAULT_DB_PATH) -> None:
-    """Tüm geçmişi temizler."""
-    conn = _get_conn(db_path)
-    try:
-        conn.execute("DELETE FROM analyses")
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# ─── CSV Dışa Aktarma ─────────────────────────────────────────────────────────
-
-def export_to_csv(
-    filter_result: str = "Tümü",
-    search_query: str = "",
-    db_path: str = _DEFAULT_DB_PATH,
-) -> str:
-    """
-    Geçmiş analizleri CSV formatında string olarak döner.
-    Streamlit'in st.download_button() ile kullanmak için uygundur.
-
-    Returns
-    -------
-    str
-        CSV içeriği.
-    """
-    rows = get_history(
-        filter_result=filter_result,
-        search_query=search_query,
-        limit=10_000,
-        db_path=db_path,
-    )
-
-    if not rows:
-        return "id,tarih,kaynak_tipi,url,domain,metin_ozeti,sonuc,guven_skoru,risk_seviyesi\n"
-
-    output = io.StringIO()
-    fieldnames = ["id", "created_at", "source_type", "url", "domain",
-                  "text_snippet", "result", "confidence", "risk_level"]
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(rows)
-
-    return output.getvalue()
+        details = get_prediction_details(args.text)
+        print(f"\n  Metin  : {args.text[:80]}{'...' if len(args.text) > 80 else ''}")
+        print(f"\n  Sonuç  : {details['emoji']} {details['label']}")
+        print(f"  Güven  : %{details['confidence']:.1f}")
+        print(f"  Sahte  : %{details['fake_probability']:.1f}")
+        print(f"  Gerçek : %{details['real_probability']:.1f}")
+        print(f"  Risk   : {details['risk_level']}")
+        print("\n" + "="*55)
+    except Exception as e:
+        print(f"\n[HATA] {e}\n")
