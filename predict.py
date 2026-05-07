@@ -8,29 +8,42 @@ yeni haber metinleri üzerinde tahmin yapar.
 
 import os
 import sys
-from typing import Tuple
+from typing import Tuple, Optional
 import joblib
 
 sys.path.insert(0, os.path.dirname(__file__))
 from preprocess import preprocess_text, load_vectorizer
 
-# Model yolu — hem model/ klasöründe hem kök dizinde ara
-_BASE = os.path.dirname(os.path.dirname(__file__))  # proje kökü
-_MODEL_PATH_DEFAULT = os.path.join(_BASE, "model", "model.pkl")
-if not os.path.exists(_MODEL_PATH_DEFAULT):
-    _MODEL_PATH_DEFAULT = os.path.join(_BASE, "model.pkl")
+_BASE = os.path.dirname(__file__)
+MODEL_PATH = os.path.join(_BASE, "model", "model.pkl")
+VECTORIZER_PATH = os.path.join(_BASE, "model", "vectorizer.pkl")
 
 
-def load_model(path: str = None):
+def _ensure_artifacts(auto_train: bool = True) -> None:
+    """
+    Model ve vectorizer dosyaları yoksa isteğe bağlı olarak eğitimi tetikler.
+    """
+    model_exists = os.path.exists(MODEL_PATH)
+    vectorizer_exists = os.path.exists(VECTORIZER_PATH)
+    if model_exists and vectorizer_exists:
+        return
+
+    if auto_train:
+        from train_model import run_training_pipeline
+        run_training_pipeline(model_choice="lr", use_demo=True)
+
+
+def load_model(path: Optional[str] = None, auto_train: bool = True):
     """
     Kaydedilmiş modeli yükler.
     """
+    _ensure_artifacts(auto_train=auto_train)
     if path is None:
-        path = _MODEL_PATH_DEFAULT
+        path = MODEL_PATH
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"Model bulunamadı: {path}\n"
-            "Lütfen önce 'python src/train_model.py' komutunu çalıştırın."
+            "Lütfen önce 'python train_model.py --demo' komutunu çalıştırın."
         )
     return joblib.load(path)
 

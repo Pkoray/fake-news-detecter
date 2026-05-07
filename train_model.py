@@ -12,6 +12,7 @@ import sys
 import pandas as pd
 import numpy as np
 import joblib
+from pandas.api.types import is_string_dtype
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
@@ -33,8 +34,9 @@ from preprocess import (
 )
 
 # Sabitler
-DATA_PATH   = os.path.join(os.path.dirname(__file__), "..", "data", "dataset.csv")
-MODEL_PATH  = os.path.join(os.path.dirname(__file__), "..", "model", "model.pkl")
+BASE_DIR = os.path.dirname(__file__)
+DATA_PATH   = os.path.join(BASE_DIR, "data", "dataset.csv")
+MODEL_PATH  = os.path.join(BASE_DIR, "model", "model.pkl")
 RANDOM_SEED = 42
 
 
@@ -127,7 +129,7 @@ def prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     unique_labels = df[label_col].unique()
     print(f"[INFO] Benzersiz label değerleri: {unique_labels}")
 
-    if df[label_col].dtype == object:
+    if is_string_dtype(df[label_col]):
         label_map = {}
         for val in unique_labels:
             val_str = str(val).strip().upper()
