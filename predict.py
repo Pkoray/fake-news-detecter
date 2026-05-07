@@ -8,29 +8,27 @@ yeni haber metinleri üzerinde tahmin yapar.
 
 import os
 import sys
-from typing import Tuple, Optional
+from typing import Tuple
+
 import joblib
 
 sys.path.insert(0, os.path.dirname(__file__))
-from preprocess import preprocess_text, load_vectorizer
+from preprocess import preprocess_text
 
 _BASE = os.path.dirname(__file__)
 MODEL_PATH = os.path.join(_BASE, "model", "model.pkl")
 VECTORIZER_PATH = os.path.join(_BASE, "model", "vectorizer.pkl")
 
 
-def load_model(path: Optional[str] = None):
-    """
-    Kaydedilmiş modeli yükler.
-    """
-    if path is None:
-        path = MODEL_PATH
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            "Model not found. Please run training before deployment.\n"
-            f"Missing file: {path}"
-        )
-    return joblib.load(path)
+def _load_inference_artifacts():
+    """Model ve vektörleştiriciyi sadece inference için yükler."""
+    if not os.path.exists(MODEL_PATH) or not os.path.exists(VECTORIZER_PATH):
+        raise RuntimeError("Model not found. Please ensure training runs during deployment.")
+
+    model = joblib.load(MODEL_PATH)
+    vectorizer = joblib.load(VECTORIZER_PATH)
+    return model, vectorizer
+
 
 # Label haritası
 LABEL_MAP = {0: "FAKE NEWS", 1: "REAL NEWS"}
@@ -41,24 +39,6 @@ LABEL_COLOR = {0: "fake", 1: "real"}
 def predict_news(text: str) -> Tuple[str, float, float]:
     """
     Verilen haber metninin gerçek mi sahte mi olduğunu tahmin eder.
-
-    Parameters
-    ----------
-    text : str
-        Tahmin edilecek haber metni.
-
-    Returns
-    -------
-    Tuple[str, float, float]
-        (label, fake_probability, real_probability)
-        label: 'FAKE NEWS' veya 'REAL NEWS'
-        fake_probability: Sahte olma olasılığı (0-1)
-        real_probability: Gerçek olma olasılığı (0-1)
-
-    Raises
-    ------
-    ValueError
-        Metin boş veya çok kısaysa.
     """
     if not text or not text.strip():
         raise ValueError("Metin boş olamaz!")
@@ -66,17 +46,11 @@ def predict_news(text: str) -> Tuple[str, float, float]:
     if len(text.strip()) < 20:
         raise ValueError("Metin çok kısa! En az 20 karakter girin.")
 
-    # Model ve vektörleştiriciyi yükle
-    model = load_model()
-    vectorizer = load_vectorizer()
+    model, vectorizer = _load_inference_artifacts()
 
-    # Ön işleme
     processed = preprocess_text(text)
-
-    # TF-IDF dönüşümü
     text_tfidf = vectorizer.transform([processed])
 
-    # Tahmin
     prediction = model.predict(text_tfidf)[0]
     probabilities = model.predict_proba(text_tfidf)[0]
 
@@ -88,24 +62,11 @@ def predict_news(text: str) -> Tuple[str, float, float]:
 
 
 def predict_batch(texts: list) -> list:
-    """
-    Birden fazla haber metni için toplu tahmin yapar.
-
-    Parameters
-    ----------
-    texts : list
-        Tahmin edilecek metin listesi.
-
-    Returns
-    -------
-    list
-        Her metin için (label, fake_prob, real_prob) tuple'larından oluşan liste.
-    """
+    """Birden fazla haber metni için toplu tahmin yapar."""
     if not texts:
         return []
 
-    model = load_model()
-    vectorizer = load_vectorizer()
+    model, vectorizer = _load_inference_artifacts()
 
     results = []
     for text in texts:
@@ -133,25 +94,11 @@ def predict_batch(texts: list) -> list:
 
 
 def get_prediction_details(text: str) -> dict:
-    """
-    Tahmin sonucu ile birlikte ek detayları döndürür.
-
-    Parameters
-    ----------
-    text : str
-        Analiz edilecek haber metni.
-
-    Returns
-    -------
-    dict
-        label, fake_prob, real_prob, confidence, risk_level
-        ve işlenmiş metin bilgilerini içeren sözlük.
-    """
+    """Tahmin sonucu ile birlikte ek detayları döndürür."""
     label, fake_prob, real_prob = predict_news(text)
 
     confidence = max(fake_prob, real_prob)
 
-    # Risk seviyesi
     if fake_prob >= 0.85:
         risk_level = "Çok Yüksek Risk"
     elif fake_prob >= 0.65:
@@ -164,25 +111,21 @@ def get_prediction_details(text: str) -> dict:
         risk_level = "Çok Düşük Risk"
 
     processed_text = preprocess_text(text)
-    word_count_original  = len(text.split())
+    word_count_original = len(text.split())
     word_count_processed = len(processed_text.split())
 
     return {
-        "label":          label,
+        "label": label,
         "fake_probability": round(fake_prob * 100, 2),
         "real_probability": round(real_prob * 100, 2),
-        "confidence":     round(confidence * 100, 2),
-        "risk_level":     risk_level,
-        "is_fake":        label == "FAKE NEWS",
-        "word_count":     word_count_original,
+        "confidence": round(confidence * 100, 2),
+        "risk_level": risk_level,
+        "is_fake": label == "FAKE NEWS",
+        "word_count": word_count_original,
         "processed_words": word_count_processed,
-        "emoji":          LABEL_EMOJI[0 if label == "FAKE NEWS" else 1],
+        "emoji": LABEL_EMOJI[0 if label == "FAKE NEWS" else 1],
     }
 
-
-# ──────────────────────────────────────────────
-# MAIN (CLI kullanımı için)
-# ──────────────────────────────────────────────
 
 if __name__ == "__main__":
     import argparse
@@ -191,9 +134,9 @@ if __name__ == "__main__":
     parser.add_argument("text", type=str, help="Analiz edilecek haber metni")
     args = parser.parse_args()
 
-    print("\n" + "="*55)
+    print("\n" + "=" * 55)
     print("   FAKE NEWS DETECTOR — TAHMİN")
-    print("="*55)
+    print("=" * 55)
 
     try:
         details = get_prediction_details(args.text)
@@ -203,7 +146,7 @@ if __name__ == "__main__":
         print(f"  Sahte  : %{details['fake_probability']:.1f}")
         print(f"  Gerçek : %{details['real_probability']:.1f}")
         print(f"  Risk   : {details['risk_level']}")
-        print("="*55 + "\n")
+        print("=" * 55 + "\n")
     except Exception as e:
         print(f"\n[HATA] {e}")
         sys.exit(1)
