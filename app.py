@@ -45,202 +45,37 @@ st.set_page_config(
 # CSS STİLLERİ
 # ──────────────────────────────────────────────
 
-st.markdown("""
+def inject_theme_css(is_dark_mode: bool) -> None:
+    """Uygulama temasını (light/dark) dinamik olarak uygular."""
+    colors = {
+        "bg": "#0f172a" if is_dark_mode else "#f7f9fc",
+        "text": "#f8fafc" if is_dark_mode else "#0f172a",
+        "muted_text": "#cbd5e1" if is_dark_mode else "#475569",
+        "card_bg": "#111827" if is_dark_mode else "#ffffff",
+        "border": "#334155" if is_dark_mode else "#e2e8f0",
+        "input_bg": "#1e293b" if is_dark_mode else "#ffffff",
+        "accent": "#2563eb",
+    }
+
+    st.markdown(f"""
 <style>
-/* Ana arka plan */
-.stApp {
-    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
-    min-height: 100vh;
-}
-
-/* Başlık */
-.main-title {
-    font-size: 2.8rem;
-    font-weight: 900;
-    text-align: center;
-    background: linear-gradient(90deg, #00d2ff, #7b2ff7, #ff6b6b);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 0.2rem;
-    letter-spacing: -1px;
-}
-
-.sub-title {
-    text-align: center;
-    color: #a0a0c0;
-    font-size: 1rem;
-    margin-bottom: 2rem;
-}
-
-/* Sonuç kartları */
-.result-card-fake {
-    background: linear-gradient(135deg, #ff4b4b22, #ff000011);
-    border: 2px solid #ff4b4b;
-    border-radius: 16px;
-    padding: 1.5rem 2rem;
-    text-align: center;
-    animation: pulse-red 2s infinite;
-}
-
-.result-card-real {
-    background: linear-gradient(135deg, #00c85122, #00ff5511);
-    border: 2px solid #00c851;
-    border-radius: 16px;
-    padding: 1.5rem 2rem;
-    text-align: center;
-    animation: pulse-green 2s infinite;
-}
-
-@keyframes pulse-red {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255,75,75,0.4); }
-    50%       { box-shadow: 0 0 20px 8px rgba(255,75,75,0.15); }
-}
-
-@keyframes pulse-green {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(0,200,81,0.4); }
-    50%       { box-shadow: 0 0 20px 8px rgba(0,200,81,0.15); }
-}
-
-.result-label {
-    font-size: 2.2rem;
-    font-weight: 900;
-    letter-spacing: 2px;
-    margin-bottom: 0.3rem;
-}
-
-.result-label-fake { color: #ff4b4b; }
-.result-label-real { color: #00c851; }
-
-.confidence-text {
-    color: #e0e0f0;
-    font-size: 1.05rem;
-}
-
-/* Metric kartları */
-.metric-row {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin: 1rem 0;
-}
-
-.metric-card {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 12px;
-    padding: 0.8rem 1.5rem;
-    text-align: center;
-    min-width: 120px;
-}
-
-.metric-value {
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: #7b2ff7;
-}
-
-.metric-label {
-    font-size: 0.75rem;
-    color: #909090;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-/* Risk badge */
-.risk-badge {
-    display: inline-block;
-    padding: 4px 14px;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    margin-top: 0.5rem;
-}
-
-/* Bilgi kutusu */
-.info-box {
-    background: rgba(123,47,247,0.12);
-    border-left: 4px solid #7b2ff7;
-    border-radius: 8px;
-    padding: 0.8rem 1.2rem;
-    color: #c0c0e0;
-    font-size: 0.9rem;
-    margin: 1rem 0;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background: rgba(15, 12, 41, 0.95);
-    border-right: 1px solid rgba(255,255,255,0.08);
-}
-
-/* Text area */
-.stTextArea textarea {
-    background: rgba(255,255,255,0.05) !important;
-    color: #e0e0f0 !important;
-    border: 1px solid rgba(123,47,247,0.4) !important;
-    border-radius: 12px !important;
-    font-size: 0.95rem !important;
-}
-
-.stTextArea textarea:focus {
-    border-color: #7b2ff7 !important;
-    box-shadow: 0 0 0 2px rgba(123,47,247,0.25) !important;
-}
-
-/* Buton */
-.stButton > button {
-    width: 100%;
-    background: linear-gradient(90deg, #7b2ff7, #00d2ff) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 12px !important;
-    padding: 0.7rem 1.5rem !important;
-    font-size: 1.05rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 1px !important;
-    transition: all 0.3s !important;
-    box-shadow: 0 4px 20px rgba(123,47,247,0.4) !important;
-}
-
-.stButton > button:hover {
-    transform: translateY(-2px) !important;
-    box-shadow: 0 6px 25px rgba(123,47,247,0.6) !important;
-}
-
-/* Örnek haberler */
-.example-news {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 0.7rem 1rem;
-    margin-bottom: 0.6rem;
-    font-size: 0.85rem;
-    color: #b0b0d0;
-    cursor: pointer;
-}
-
-/* Progress bar rengi */
-div[data-testid="stProgress"] > div > div {
-    background: linear-gradient(90deg, #7b2ff7, #00d2ff) !important;
-}
-
-/* Sekme */
-.stTabs [data-baseweb="tab"] {
-    color: #a0a0c0;
-}
-.stTabs [data-baseweb="tab"][aria-selected="true"] {
-    color: #7b2ff7 !important;
-    border-bottom-color: #7b2ff7 !important;
-}
-
-/* Divider */
-hr {
-    border-color: rgba(255,255,255,0.1) !important;
-}
+.stApp {{ background: {colors['bg']}; color: {colors['text']}; min-height: 100vh; }}
+.main-title {{ font-size: 2.8rem; font-weight: 900; text-align: center; color: {colors['text']}; margin-bottom: 0.2rem; letter-spacing: -1px; }}
+.sub-title {{ text-align: center; color: {colors['muted_text']}; font-size: 1rem; margin-bottom: 2rem; }}
+.confidence-text {{ color: {colors['muted_text']}; font-size: 1.05rem; }}
+.info-box {{ background: {colors['card_bg']}; border-left: 4px solid {colors['accent']}; border: 1px solid {colors['border']}; border-radius: 8px; padding: 0.8rem 1.2rem; color: {colors['text']}; font-size: 0.9rem; margin: 1rem 0; }}
+[data-testid="stSidebar"] {{ background: {colors['card_bg']}; border-right: 1px solid {colors['border']}; }}
+.stTextArea textarea, .stTextInput input {{ background: {colors['input_bg']} !important; color: {colors['text']} !important; border: 1px solid {colors['border']} !important; border-radius: 12px !important; font-size: 0.95rem !important; }}
+.stTextArea textarea:focus, .stTextInput input:focus {{ border-color: {colors['accent']} !important; box-shadow: 0 0 0 2px rgba(37,99,235,0.2) !important; }}
+.stButton > button {{ width: 100%; background: linear-gradient(90deg, #2563eb, #0ea5e9) !important; color: white !important; border: none !important; border-radius: 12px !important; padding: 0.7rem 1.5rem !important; font-size: 1.05rem !important; font-weight: 700 !important; letter-spacing: 1px !important; transition: all 0.3s !important; box-shadow: 0 4px 18px rgba(37,99,235,0.28) !important; }}
+.stButton > button:hover {{ transform: translateY(-2px) !important; box-shadow: 0 6px 24px rgba(37,99,235,0.45) !important; }}
+div[data-testid="stProgress"] > div > div {{ background: linear-gradient(90deg, #2563eb, #0ea5e9) !important; }}
+.stTabs [data-baseweb="tab"] {{ color: {colors['muted_text']}; }}
+.stTabs [data-baseweb="tab"][aria-selected="true"] {{ color: {colors['accent']} !important; border-bottom-color: {colors['accent']} !important; }}
+hr {{ border-color: {colors['border']} !important; }}
+.app-card {{ background: {colors['card_bg']}; border: 1px solid {colors['border']}; border-radius: 16px; padding: 1rem 1.2rem; margin-bottom: 1rem; }}
 </style>
 """, unsafe_allow_html=True)
-
 
 # ──────────────────────────────────────────────
 # YARDIMCI FONKSİYONLAR
@@ -380,6 +215,15 @@ def main() -> None:
     Streamlit uygulamasının ana fonksiyonu.
     Tüm UI bileşenlerini oluşturur ve kullanıcı etkileşimini yönetir.
     """
+
+    if "dark_mode" not in st.session_state:
+        st.session_state["dark_mode"] = False
+
+    top_left, top_right = st.columns([6, 1])
+    with top_right:
+        st.session_state["dark_mode"] = st.toggle("🌙 Dark Mode", value=st.session_state["dark_mode"], key="dark_mode_toggle")
+
+    inject_theme_css(st.session_state["dark_mode"])
 
     # Sidebar
     render_sidebar()
@@ -559,11 +403,11 @@ def main() -> None:
             else:
                 st.markdown("""
                 <div style="
-                    border: 2px dashed rgba(123,47,247,0.3);
+                    border: 2px dashed rgba(148,163,184,0.5);
                     border-radius: 16px;
                     padding: 3rem;
                     text-align: center;
-                    color: #606090;
+                    color: #64748b;
                 ">
                     <div style="font-size: 1.1rem;">Henüz analiz yapılmadı</div>
                     <div style="font-size: 0.85rem; margin-top: 0.5rem;">
