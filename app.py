@@ -22,8 +22,12 @@ from source_scorer import score_source
 from explainer import get_word_importance, get_text_word_scores
 from history import init_db, save_analysis, get_history, get_stats, delete_record, clear_all, export_to_csv
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "model", "model.pkl")
+VECTORIZER_PATH = os.path.join(BASE_DIR, "model", "vectorizer.pkl")
+
 # Geçmiş DB'yi başlat
-_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "history.db")
+_DB_PATH = os.path.join(BASE_DIR, "data", "history.db")
 init_db(_DB_PATH)
 
 # ──────────────────────────────────────────────
@@ -390,10 +394,7 @@ def main() -> None:
     st.markdown("---")
 
     # Model durumu kontrolü
-    _base = os.path.dirname(__file__)
-    model_path = os.path.join(_base, "model", "model.pkl")
-    vectorizer_path = os.path.join(_base, "model", "vectorizer.pkl")
-    model_ready = os.path.exists(model_path) and os.path.exists(vectorizer_path)
+    model_ready = os.path.exists(MODEL_PATH) and os.path.exists(VECTORIZER_PATH)
 
     if not model_ready:
         st.error("Model is not available. Please redeploy with training enabled.")
@@ -513,7 +514,7 @@ def main() -> None:
 
                 # Açıklanabilirlik
                 st.markdown("---")
-                model_dir = os.path.join(os.path.dirname(__file__), "model")
+                model_dir = os.path.join(BASE_DIR, "model")
                 word_result = get_text_word_scores(original_text, model_dir, top_n=8)
                 if word_result and word_result.get("success"):
                     with st.expander("🔍 Kelime Etkisi — Hangi kelimeler bu kararı tetikledi?", expanded=False):
@@ -807,7 +808,7 @@ def main() -> None:
                 "predict.py":            "Tahmin modülü",
             }
             for fpath, fname in files_to_check.items():
-                full_path = os.path.join(os.path.dirname(__file__), fpath)
+                full_path = os.path.join(BASE_DIR, fpath)
                 exists = os.path.exists(full_path)
                 icon = "✅" if exists else "❌"
                 size = ""
