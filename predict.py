@@ -19,31 +19,16 @@ MODEL_PATH = os.path.join(_BASE, "model", "model.pkl")
 VECTORIZER_PATH = os.path.join(_BASE, "model", "vectorizer.pkl")
 
 
-def _ensure_artifacts(auto_train: bool = True) -> None:
-    """
-    Model ve vectorizer dosyaları yoksa isteğe bağlı olarak eğitimi tetikler.
-    """
-    model_exists = os.path.exists(MODEL_PATH)
-    vectorizer_exists = os.path.exists(VECTORIZER_PATH)
-    if model_exists and vectorizer_exists:
-        return
-
-    if auto_train:
-        from train_model import run_training_pipeline
-        run_training_pipeline(model_choice="lr", use_demo=True)
-
-
-def load_model(path: Optional[str] = None, auto_train: bool = True):
+def load_model(path: Optional[str] = None):
     """
     Kaydedilmiş modeli yükler.
     """
-    _ensure_artifacts(auto_train=auto_train)
     if path is None:
         path = MODEL_PATH
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"Model bulunamadı: {path}\n"
-            "Lütfen önce 'python train_model.py --demo' komutunu çalıştırın."
+            "Model not found. Please run training before deployment.\n"
+            f"Missing file: {path}"
         )
     return joblib.load(path)
 
@@ -218,6 +203,7 @@ if __name__ == "__main__":
         print(f"  Sahte  : %{details['fake_probability']:.1f}")
         print(f"  Gerçek : %{details['real_probability']:.1f}")
         print(f"  Risk   : {details['risk_level']}")
-        print("\n" + "="*55)
+        print("="*55 + "\n")
     except Exception as e:
-        print(f"\n[HATA] {e}\n")
+        print(f"\n[HATA] {e}")
+        sys.exit(1)
