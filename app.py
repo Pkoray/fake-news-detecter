@@ -73,7 +73,7 @@ def main() -> None:
             st.session_state.clear()
             st.rerun()
 
-    st.title("Büyüteç Haber Ajansı")
+    st.title("Büyüteç Sahte Haber Tespit Sistemi")
     model_ready = os.path.exists(MODEL_PATH) and os.path.exists(VECTORIZER_PATH)
     if not model_ready:
         st.error("Model dosyaları eksik.")
