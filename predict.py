@@ -19,32 +19,22 @@ MODEL_PATH = os.path.join(_BASE, "model", "model.pkl")
 VECTORIZER_PATH = os.path.join(_BASE, "model", "vectorizer.pkl")
 
 
-def _ensure_artifacts(auto_train: bool = True) -> None:
-    """
-    Model ve vectorizer dosyaları yoksa isteğe bağlı olarak eğitimi tetikler.
-    """
-    model_exists = os.path.exists(MODEL_PATH)
-    vectorizer_exists = os.path.exists(VECTORIZER_PATH)
-    if model_exists and vectorizer_exists:
+def _ensure_artifacts() -> None:
+    """Ensure trained artifacts exist before inference."""
+    if os.path.exists(MODEL_PATH) and os.path.exists(VECTORIZER_PATH):
         return
-
-    if auto_train:
-        from train_model import run_training_pipeline
-        run_training_pipeline(model_choice="lr", use_demo=True)
+    raise RuntimeError("Model not found. Please ensure training runs during deployment.")
 
 
-def load_model(path: Optional[str] = None, auto_train: bool = True):
+def load_model(path: Optional[str] = None):
     """
     Kaydedilmiş modeli yükler.
     """
-    _ensure_artifacts(auto_train=auto_train)
+    _ensure_artifacts()
     if path is None:
         path = MODEL_PATH
     if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"Model bulunamadı: {path}\n"
-            "Lütfen önce 'python train_model.py --demo' komutunu çalıştırın."
-        )
+        raise RuntimeError("Model not found. Please ensure training runs during deployment.")
     return joblib.load(path)
 
 # Label haritası

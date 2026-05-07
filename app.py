@@ -397,8 +397,7 @@ def main() -> None:
 
     if not model_ready:
         st.warning(
-            "Model dosyaları henüz hazır değil. İlk analiz isteğinde otomatik demo eğitim tetiklenir. "
-            "İsterseniz terminalden manuel de çalıştırabilirsiniz:\n\n"
+            "Model files are not ready. Please ensure deployment runs:\n\n"
             "```bash\npython train_model.py --demo\n```"
         )
 
