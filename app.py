@@ -396,11 +396,8 @@ def main() -> None:
     model_ready = os.path.exists(model_path) and os.path.exists(vectorizer_path)
 
     if not model_ready:
-        st.warning(
-            "Model dosyaları henüz hazır değil. İlk analiz isteğinde otomatik demo eğitim tetiklenir. "
-            "İsterseniz terminalden manuel de çalıştırabilirsiniz:\n\n"
-            "```bash\npython train_model.py --demo\n```"
-        )
+        st.error("Model is not available. Please redeploy with training enabled.")
+        st.stop()
 
     # ── Sekmeler ──────────────────────────────
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
