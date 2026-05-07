@@ -43,12 +43,22 @@ def auth_screen() -> None:
                 else:
                     st.error("Bu kullanıcı adı zaten kayıtlı.")
 
-    if st.button("Continue as Guest", use_container_width=True):
+    if st.button("Misafir olarak devam et", use_container_width=True):
         st.session_state["user"] = "guest"
         st.rerun()
 
 
+
+
+def render_sidebar() -> None:
+    st.sidebar.header("Teknolojiler")
+    st.sidebar.markdown("- Streamlit")
+    st.sidebar.markdown("- Scikit-learn")
+    st.sidebar.markdown("- SQLite")
+
 def main() -> None:
+    render_sidebar()
+
     if "user" not in st.session_state:
         auth_screen()
         return
