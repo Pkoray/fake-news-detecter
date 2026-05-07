@@ -15,7 +15,7 @@ import streamlit as st
 import time
 
 # Kaynak modülleri import et
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.path.dirname(__file__))
 from predict import get_prediction_details, predict_batch
 from url_fetcher import fetch_article, extract_domain, check_dependencies as url_deps_ok
 from source_scorer import score_source
@@ -389,23 +389,17 @@ def main() -> None:
 
     st.markdown("---")
 
-    # Model durumu kontrolü — hem model/ klasöründe hem kök dizinde ara
+    # Model durumu kontrolü
     _base = os.path.dirname(__file__)
     model_path = os.path.join(_base, "model", "model.pkl")
     vectorizer_path = os.path.join(_base, "model", "vectorizer.pkl")
-    if not os.path.exists(model_path):
-        model_path = os.path.join(_base, "model.pkl")
-    if not os.path.exists(vectorizer_path):
-        vectorizer_path = os.path.join(_base, "vectorizer.pkl")
     model_ready = os.path.exists(model_path) and os.path.exists(vectorizer_path)
 
     if not model_ready:
         st.warning(
-            "Model henüz eğitilmemiş! "
-            "Lütfen önce terminalde şu komutu çalıştırın:\n\n"
-            "```bash\npython src/train_model.py --demo\n```\n\n"
-            "Gerçek veri setiyle eğitmek için:\n"
-            "```bash\npython src/train_model.py\n```"
+            "Model dosyaları henüz hazır değil. İlk analiz isteğinde otomatik demo eğitim tetiklenir. "
+            "İsterseniz terminalden manuel de çalıştırabilirsiniz:\n\n"
+            "```bash\npython train_model.py --demo\n```"
         )
 
     # ── Sekmeler ──────────────────────────────
@@ -811,9 +805,9 @@ def main() -> None:
                 "model/model.pkl":       "Model dosyası",
                 "model/vectorizer.pkl":  "Vektörleştirici",
                 "data/dataset.csv":      "Veri seti",
-                "src/preprocess.py":     "Ön işleme modülü",
-                "src/train_model.py":    "Eğitim modülü",
-                "src/predict.py":        "Tahmin modülü",
+                "preprocess.py":         "Ön işleme modülü",
+                "train_model.py":        "Eğitim modülü",
+                "predict.py":            "Tahmin modülü",
             }
             for fpath, fname in files_to_check.items():
                 full_path = os.path.join(os.path.dirname(__file__), fpath)
@@ -832,11 +826,11 @@ def main() -> None:
             st.markdown("#### Eğitim Komutu")
             st.code(
                 "# Demo veriyle hızlı başlangıç\n"
-                "python src/train_model.py --demo\n\n"
+                "python train_model.py --demo\n\n"
                 "# Logistic Regression (varsayılan)\n"
-                "python src/train_model.py --model lr\n\n"
+                "python train_model.py --model lr\n\n"
                 "# Random Forest\n"
-                "python src/train_model.py --model rf",
+                "python train_model.py --model rf",
                 language="bash",
             )
 

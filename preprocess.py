@@ -16,10 +16,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import joblib
 import os
 
-# Gerekli NLTK verilerini indir
-nltk.download("stopwords", quiet=True)
-nltk.download("punkt", quiet=True)
-nltk.download("punkt_tab", quiet=True)
+# Gerekli NLTK verilerini indir (ağ kısıtlı ortamlarda sessizce devam et)
+for pkg in ("stopwords", "punkt", "punkt_tab"):
+    try:
+        nltk.download(pkg, quiet=True)
+    except Exception:
+        pass
 
 # ── TÜRKÇE STOPWORD LİSTESİ ──────────────────────────────────────────────────
 TURKISH_STOPWORDS = {
@@ -68,15 +70,16 @@ TURKISH_STOPWORDS = {
 }
 
 # İngilizce stopword'ler
-_en_stops = set(stopwords.words("english"))
+try:
+    _en_stops = set(stopwords.words("english"))
+except LookupError:
+    _en_stops = set()
 
 # Birleşik Türkçe + İngilizce stopword seti
 STOP_WORDS = TURKISH_STOPWORDS | _en_stops
 
-_BASE_DIR = os.path.dirname(os.path.dirname(__file__))  # proje kökü
+_BASE_DIR = os.path.dirname(__file__)  # proje kökü
 VECTORIZER_PATH = os.path.join(_BASE_DIR, "model", "vectorizer.pkl")
-if not os.path.exists(VECTORIZER_PATH):
-    VECTORIZER_PATH = os.path.join(_BASE_DIR, "vectorizer.pkl")
 
 
 def clean_text(text: str) -> str:
@@ -253,6 +256,6 @@ def load_vectorizer() -> TfidfVectorizer:
     if not os.path.exists(VECTORIZER_PATH):
         raise FileNotFoundError(
             f"Vektörleştirici bulunamadı: {VECTORIZER_PATH}\n"
-            "Lütfen önce 'python src/train_model.py' komutunu çalıştırın."
+            "Lütfen önce 'python train_model.py --demo' komutunu çalıştırın."
         )
     return joblib.load(VECTORIZER_PATH)
