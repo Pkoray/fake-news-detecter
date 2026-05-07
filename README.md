@@ -149,6 +149,17 @@ python src/predict.py "Hükümet içme suyuna zihin kontrol kimyasalı karışt�
 
 ---
 
+
+## ☁️ Render Deployment (Persistent Model Artifacts)
+
+Render'da uygulama başlarken model dosyalarının mutlaka hazır olması için başlangıç komutunu şu şekilde kullanın:
+
+```bash
+python train_model.py --demo && streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+```
+
+Bu akışta `model/model.pkl` ve `model/vectorizer.pkl` dosyaları Streamlit başlamadan önce üretilir; çalışma zamanında (request anında) otomatik eğitim yapılmaz.
+
 ## 🤖 Model Eğitimi
 
 > ⚠️ **Not:** `model/` klasöründeki `.pkl` dosyaları büyük olduğu için GitHub'a yüklenmez (`.gitignore`). Modeli kendiniz eğitmeniz gerekir.
