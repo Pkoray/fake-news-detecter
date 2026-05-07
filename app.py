@@ -66,7 +66,8 @@ def main() -> None:
     user = st.session_state["user"]
     top_left, top_right = st.columns([5, 1])
     with top_left:
-        st.markdown(f"**Logged in as: {user}**")
+        display_user = "Misafir" if user == "guest" else user
+        st.markdown(f"**Giriş yapan: {display_user}**")
     with top_right:
         if st.button("Çıkış"):
             st.session_state.clear()
@@ -108,7 +109,7 @@ def main() -> None:
     with tab3:
         st.subheader("📋 Geçmiş")
         if user == "guest":
-            st.info("Guest kullanıcılar için geçmiş tutulmaz.")
+            st.info("Misafir kullanıcılar için geçmiş tutulmaz.")
         else:
             rows = get_history(user)
             if not rows:
