@@ -27,8 +27,9 @@ def _load_model_and_vectorizer(model_dir: str) -> tuple | None:
     -------
     tuple (model, vectorizer) veya None
     """
-    model_path      = os.path.join(model_dir, "model.pkl")
-    vectorizer_path = os.path.join(model_dir, "vectorizer.pkl")
+    model_base_path = os.path.abspath(model_dir)
+    model_path      = os.path.join(model_base_path, "model.pkl")
+    vectorizer_path = os.path.join(model_base_path, "vectorizer.pkl")
 
     if not (os.path.exists(model_path) and os.path.exists(vectorizer_path)):
         return None

@@ -13,9 +13,9 @@ import joblib
 
 from preprocess import preprocess_text
 
-_BASE = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(_BASE, "model", "model.pkl")
-VECTORIZER_PATH = os.path.join(_BASE, "model", "vectorizer.pkl")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "model", "model.pkl")
+VECTORIZER_PATH = os.path.join(BASE_DIR, "model", "vectorizer.pkl")
 
 # Label haritası
 LABEL_MAP = {0: "FAKE NEWS", 1: "REAL NEWS"}
